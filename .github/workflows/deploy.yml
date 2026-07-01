@@ -1,0 +1,64 @@
+name: Test and Deploy to GitHub Pages
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: 检查代码
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 提取内联 JS 并做语法检查
+        run: |
+          node -e "
+            const fs = require('fs');
+            const html = fs.readFileSync('index.html', 'utf8');
+            const re = /<script>([\s\S]*?)<\/script>/g;
+            let m, last;
+            while ((m = re.exec(html))) { last = m[1]; }
+            fs.writeFileSync('_check.js', last);
+          "
+          node --check _check.js
+
+      - name: 确认关键 DOM id 一一对应
+        run: |
+          node -e "
+            const fs = require('fs');
+            const html = fs.readFileSync('index.html', 'utf8');
+            const ids = [...html.matchAll(/getElementById\('([^']+)'\)/g)].map(m => m[1]);
+            const missing = ids.filter(id => !new RegExp('id=\"' + id + '\"').test(html));
+            if (missing.length) {
+              console.error('缺失的 DOM id:', missing);
+              process.exit(1);
+            }
+            console.log('DOM id 检查通过，共', ids.length, '个引用');
+          "
+
+  deploy:
+    name: 部署到 GitHub Pages
+    needs: test
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: "."
+      - id: deployment
+        uses: actions/deploy-pages@v4
