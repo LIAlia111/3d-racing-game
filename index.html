@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>无限高速公路 3D 赛车</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; overflow: hidden; width: 100%; height: 100%;
+    background: #000; font-family: "Microsoft YaHei", Arial, sans-serif;
+    -webkit-user-select: none; user-select: none;
+  }
+  canvas { display: block; }
+
+  /* ---------- HUD ---------- */
+  #hud {
+    position: fixed; inset: 0; pointer-events: none; color: #fff;
+    text-shadow: 0 1px 3px rgba(0,0,0,.6);
+  }
+  .panel {
+    position: absolute; background: rgba(10,14,20,.45);
+    border: 1px solid rgba(255,255,255,.12); border-radius: 10px;
+    padding: 10px 14px; backdrop-filter: blur(2px);
+  }
+  #topLeft { top: 14px; left: 14px; min-width: 150px; }
+  #topLeft .row { font-size: 14px; margin: 2px 0; opacity: .9; }
+  #topLeft .val { font-weight: bold; color: #ffd23f; }
+
+  #viewBadge {
+    top: 14px; left: 50%; transform: translateX(-50%);
+    font-size: 13px; letter-spacing: 1px; padding: 6px 16px;
+  }
+
+  #dash {
+    right: 16px; bottom: 16px; width: 210px; text-align: center; padding: 8px 10px 12px;
+  }
+  #gauge { width: 190px; height: 130px; }
+  #speedNum { font-size: 28px; font-weight: bold; margin-top: -14px; }
+  #speedUnit { font-size: 12px; opacity: .75; margin-left: 4px; }
+
+  #nitroWrap { margin-top: 8px; }
+  #nitroLabel { font-size: 11px; opacity: .8; text-align: left; margin-bottom: 3px; }
+  #nitroBar {
+    width: 100%; height: 12px; border-radius: 6px; background: rgba(255,255,255,.15);
+    overflow: hidden; border: 1px solid rgba(255,255,255,.25);
+  }
+  #nitroFill {
+    height: 100%; width: 100%; border-radius: 6px;
+    background: linear-gradient(90deg, #1e90ff, #66e0ff);
+    transition: width .1s linear;
+  }
+  #nitroFill.active { background: linear-gradient(90deg, #00d4ff, #ffffff); box-shadow: 0 0 10px #66e0ff; }
+
+  #hintBar {
+    left: 14px; bottom: 14px; font-size: 12px; line-height: 1.6; opacity: .75; padding: 8px 12px;
+  }
+
+  /* ---------- 全屏遮罩通用 ---------- */
+  .overlay {
+    position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center;
+    background: radial-gradient(ellipse at center, rgba(15,20,30,.55) 0%, rgba(5,7,10,.92) 100%);
+    color: #fff; z-index: 20;
+  }
+  .overlay h1 { font-size: 34px; margin: 0 0 6px; letter-spacing: 2px; }
+  .overlay h1 span { color: #ffd23f; }
+  .overlay p.sub { opacity: .75; margin: 0 0 26px; font-size: 14px; }
+  .overlay .controls {
+    background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.15);
+    border-radius: 12px; padding: 18px 26px; margin-bottom: 26px; font-size: 14px; text-align: left;
+    min-width: 300px;
+  }
+  .overlay .controls div { margin: 6px 0; }
+  .overlay .controls b { color: #ffd23f; display: inline-block; min-width: 120px; }
+  .overlay button {
+    pointer-events: auto; cursor: pointer; font-size: 17px; font-weight: bold;
+    padding: 12px 40px; border-radius: 30px; border: none;
+    background: linear-gradient(90deg,#ff3b30,#ff8a00); color: #fff;
+    box-shadow: 0 6px 18px rgba(255,90,0,.4); letter-spacing: 2px;
+  }
+  .overlay button:hover { filter: brightness(1.1); }
+  .overlay .stats { display: flex; gap: 26px; margin-bottom: 24px; }
+  .overlay .stats div { background: rgba(255,255,255,.07); border-radius: 10px; padding: 12px 22px; }
+  .overlay .stats .num { font-size: 22px; font-weight: bold; color: #ffd23f; }
+  .overlay .stats .lbl { font-size: 12px; opacity: .7; margin-top: 4px; }
+
+  #loadError {
+    display: none; position: fixed; inset: 0; z-index: 50; color: #fff;
+    background: #10141a; align-items: center; justify-content: center; text-align: center;
+    flex-direction: column; font-size: 15px; line-height: 1.8; padding: 20px;
+  }
+
+  /* 氮气加速时的速度冲刺光晕 */
+  #nitroOverlay {
+    position: fixed; inset: 0; pointer-events: none; z-index: 5; opacity: 0;
+    background: radial-gradient(ellipse at center, rgba(255,255,255,0) 40%, rgba(80,190,255,.35) 100%);
+    transition: opacity .2s ease;
+  }
+  #nitroOverlay.active { opacity: 1; }
+</style>
+</head>
+<body>
+
+<div id="hud">
+  <div id="topLeft" class="panel">
+    <div class="row">用时&nbsp; <span class="val" id="timeValue">00:00</span></div>
+    <div class="row">距离&nbsp; <span class="val" id="distValue">0 m</span></div>
+  </div>
+
+  <div id="viewBadge" class="panel">视角：<span id="viewValue">第三人称</span>（按 C / V 切换）</div>
+
+  <div id="dash" class="panel">
+    <canvas id="gauge" width="190" height="130"></canvas>
+    <div id="speedNum">0<span id="speedUnit">km/h</span></div>
+    <div id="nitroWrap">
+      <div id="nitroLabel">氮气 NITRO</div>
+      <div id="nitroBar"><div id="nitroFill"></div></div>
+    </div>
+  </div>
+
+  <div id="hintBar" class="panel">
+    W/S 或 ↑/↓ 加速刹车&nbsp;&nbsp;|&nbsp;&nbsp; A/D 或 ←/→ 转向<br>
+    Shift 或 空格 氮气加速&nbsp;&nbsp;|&nbsp;&nbsp; C/V 切换视角&nbsp;&nbsp;|&nbsp;&nbsp; R 撞车后重开
+  </div>
+</div>
+
+<div id="nitroOverlay"></div>
+
+<div id="startScreen" class="overlay">
+  <h1>无限高速公路 <span>3D 赛车</span></h1>
+  <p class="sub">单文件网页赛车游戏 · 键盘操控 · 第一 / 第三人称自由切换</p>
+  <div class="controls">
+    <div><b>W / ↑</b>加速</div>
+    <div><b>S / ↓</b>刹车 / 倒退</div>
+    <div><b>A / D 或 ←/→</b>左右变道转向</div>
+    <div><b>Shift / 空格</b>氮气加速（消耗后自动恢复）</div>
+    <div><b>C 或 V</b>切换第一 / 第三人称视角</div>
+    <div><b>R</b>撞车后重新开始</div>
+  </div>
+  <button id="startBtn">开始行驶</button>
+</div>
+
+<div id="crashScreen" class="overlay" style="display:none;">
+  <h1>💥 <span>撞车了</span></h1>
+  <p class="sub">在无限高速公路上，你坚持了这么久：</p>
+  <div class="stats">
+    <div><div class="num" id="crashDist">0 m</div><div class="lbl">行驶距离</div></div>
+    <div><div class="num" id="crashTime">00:00</div><div class="lbl">存活时间</div></div>
+    <div><div class="num" id="crashTop">0 km/h</div><div class="lbl">最高时速</div></div>
+  </div>
+  <button id="restartBtn">重新开始（R）</button>
+</div>
+
+<div id="loadError">
+  <div>⚠️ Three.js 渲染引擎加载失败</div>
+  <div style="opacity:.7;font-size:13px;">本游戏首次运行需要联网加载一次渲染库，请检查网络连接后刷新页面重试。</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  if (typeof THREE === 'undefined') {
+    document.getElementById('loadError').style.display = 'flex';
+    return;
+  }
+
+  // ============================================================
+  // 常量配置
+  // ============================================================
+  var LANE_WIDTH = 4;
+  var LANE_COUNT = 4;
+  var ROAD_HALF_WIDTH = (LANE_WIDTH * LANE_COUNT) / 2;   // 8
+  var CAR_HALF_WIDTH = 0.9;
+
+  var CHUNK_LENGTH = 60;
+  var CHUNK_COUNT = 14;
+  var TOTAL_ROAD_LENGTH = CHUNK_LENGTH * CHUNK_COUNT;    // 840
+  var RECYCLE_Z = 90;   // 大于「摄像机z + 一段车道长度」，保证回收发生在视野之外，不会看到瞬移
+
+  var BASE_MAX_SPEED = 60;     // 普通最高速度（游戏单位/秒）
+  var NITRO_MAX_SPEED = 96;    // 氮气最高速度
+  var ACCEL = 20;
+  var NITRO_EXTRA_ACCEL = 32;
+  var BRAKE_DECEL = 34;
+  var DRAG_DECEL = 8;
+  var STEER_SPEED = 24;
+  var NITRO_DRAIN = 34;   // 每秒消耗（0-100）
+  var NITRO_REGEN = 13;   // 每秒恢复
+  var SPEED_TO_KMH = 6;   // 显示换算：游戏单位 -> km/h（纯观感数值，营造街机感）
+  var GAUGE_MAX_KMH = 380;
+
+  var AI_COUNT = 7;
+  var AI_MIN_SPEED_FACTOR = 0.35;
+  var AI_MAX_SPEED_FACTOR = 0.75;
+  var AI_COLORS = [0x3b82f6, 0xffd23f, 0x22c55e, 0xa78bfa, 0xf97316, 0xffffff, 0x14b8a6];
+
+  // ============================================================
+  // 全局状态
+  // ============================================================
+  var scene, camera, renderer, clock;
+  var playerCar;
+  var roadChunks = [];
+  var aiCars = [];
+  var keys = {};
+
+  var gameState = 'ready';   // ready | playing | crashed
+  var viewMode = 'third';    // third | first
+
+  var speed = 0;
+  var steerX = 0;
+  var yaw = 0;
+  var nitroFuel = 100;
+  var nitroActive = false;
+  var distance = 0;
+  var topSpeedKmh = 0;
+  var startTime = 0;
+  var elapsed = 0;
+  var camThirdX = 0;
+  var idleAngle = 0;
+
+  var dom = {};
+  var gctx = null;
+
+  // ============================================================
+  // 初始化
+  // ============================================================
+  init();
+
+  function init() {
+    scene = new THREE.Scene();
+    var skyColor = 0x8fd3ff;
+    scene.background = new THREE.Color(skyColor);
+    scene.fog = new THREE.Fog(skyColor, 60, 340);
+
+    camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
+
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    var hemi = new THREE.HemisphereLight(0xffffff, 0x445566, 0.9);
+    scene.add(hemi);
+    var sun = new THREE.DirectionalLight(0xffffff, 0.9);
+    sun.position.set(-30, 50, 20);
+    scene.add(sun);
+
+    // 巨大草地平面（一次性铺满，不需要回收）
+    var grass = new THREE.Mesh(
+      new THREE.PlaneGeometry(4000, 4000),
+      new THREE.MeshStandardMaterial({ color: 0x4c8c3a })
+    );
+    grass.rotation.x = -Math.PI / 2;
+    grass.position.y = -0.02;
+    scene.add(grass);
+
+    // 道路分段（循环回收，营造无限高速公路）
+    for (var i = 0; i < CHUNK_COUNT; i++) {
+      var chunk = createRoadChunk();
+      chunk.position.z = -i * CHUNK_LENGTH;
+      scene.add(chunk);
+      roadChunks.push(chunk);
+    }
+
+    // 玩家车辆
+    playerCar = createCarMesh(0xff3b30);
+    scene.add(playerCar);
+
+    // AI 车辆
+    spawnAiCars();
+
+    clock = new THREE.Clock();
+
+    cacheDom();
+    gctx = dom.gauge.getContext('2d');
+    bindEvents();
+
+    animate();
+  }
+
+  function cacheDom() {
+    dom.startScreen = document.getElementById('startScreen');
+    dom.crashScreen = document.getElementById('crashScreen');
+    dom.startBtn = document.getElementById('startBtn');
+    dom.restartBtn = document.getElementById('restartBtn');
+    dom.speedNum = document.getElementById('speedNum');
+    dom.nitroFill = document.getElementById('nitroFill');
+    dom.timeValue = document.getElementById('timeValue');
+    dom.distValue = document.getElementById('distValue');
+    dom.viewValue = document.getElementById('viewValue');
+    dom.crashDist = document.getElementById('crashDist');
+    dom.crashTime = document.getElementById('crashTime');
+    dom.crashTop = document.getElementById('crashTop');
+    dom.gauge = document.getElementById('gauge');
+    dom.nitroOverlay = document.getElementById('nitroOverlay');
+  }
+
+  // ============================================================
+  // 场景构建：道路分段 / 路灯 / 护栏
+  // ============================================================
+  function createRoadChunk() {
+    var group = new THREE.Group();
+
+    // 沥青路面
+    var roadMesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(ROAD_HALF_WIDTH * 2, CHUNK_LENGTH),
+      new THREE.MeshStandardMaterial({ color: 0x3a3a3f, roughness: 1 })
+    );
+    roadMesh.rotation.x = -Math.PI / 2;
+    roadMesh.position.set(0, 0, -CHUNK_LENGTH / 2);
+    group.add(roadMesh);
+
+    // 车道虚线分隔线
+    var dashMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    for (var lane = 1; lane < LANE_COUNT; lane++) {
+      var x = -ROAD_HALF_WIDTH + lane * LANE_WIDTH;
+      for (var d = 2; d < CHUNK_LENGTH; d += 8) {
+        var dash = new THREE.Mesh(new THREE.PlaneGeometry(0.25, 3.2), dashMat);
+        dash.rotation.x = -Math.PI / 2;
+        dash.position.set(x, 0.01, -d);
+        group.add(dash);
+      }
+    }
+
+    // 路边黄色边线
+    var edgeMat = new THREE.MeshBasicMaterial({ color: 0xffcc33 });
+    [-ROAD_HALF_WIDTH + 0.15, ROAD_HALF_WIDTH - 0.15].forEach(function (ex) {
+      var edge = new THREE.Mesh(new THREE.PlaneGeometry(0.25, CHUNK_LENGTH), edgeMat);
+      edge.rotation.x = -Math.PI / 2;
+      edge.position.set(ex, 0.011, -CHUNK_LENGTH / 2);
+      group.add(edge);
+    });
+
+    // 两侧护栏 + 路灯
+    var barrierMat = new THREE.MeshStandardMaterial({ color: 0xcccccc });
+    [-1, 1].forEach(function (side) {
+      var barrier = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.8, CHUNK_LENGTH), barrierMat);
+      barrier.position.set(side * (ROAD_HALF_WIDTH + 0.4), 0.4, -CHUNK_LENGTH / 2);
+      group.add(barrier);
+
+      for (var d2 = 10; d2 < CHUNK_LENGTH; d2 += 30) {
+        var pole = createLampPost();
+        pole.position.set(side * (ROAD_HALF_WIDTH + 2.2), 0, -d2);
+        group.add(pole);
+      }
+    });
+
+    return group;
+  }
+
+  function createLampPost() {
+    var g = new THREE.Group();
+    var pole = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.08, 0.08, 4.2, 6),
+      new THREE.MeshStandardMaterial({ color: 0x444444 })
+    );
+    pole.position.y = 2.1;
+    g.add(pole);
+
+    var lamp = new THREE.Mesh(
+      new THREE.SphereGeometry(0.25, 8, 8),
+      new THREE.MeshStandardMaterial({ color: 0xfff2c1, emissive: 0xffe9a8, emissiveIntensity: 0.8 })
+    );
+    lamp.position.y = 4.3;
+    g.add(lamp);
+    return g;
+  }
+
+  // ============================================================
+  // 车辆构建（玩家 / AI 通用）
+  // 约定：车头朝向 -Z（前进方向），车尾朝向 +Z
+  // ============================================================
+  function createCarMesh(bodyColor) {
+    var car = new THREE.Group();
+
+    var body = new THREE.Mesh(
+      new THREE.BoxGeometry(1.8, 0.6, 4),
+      new THREE.MeshStandardMaterial({ color: bodyColor, metalness: 0.3, roughness: 0.4 })
+    );
+    body.position.y = 0.55;
+    car.add(body);
+
+    var cabin = new THREE.Mesh(
+      new THREE.BoxGeometry(1.3, 0.5, 1.8),
+      new THREE.MeshStandardMaterial({ color: 0x1b1f24, metalness: 0.1, roughness: 0.2 })
+    );
+    cabin.position.set(0, 1.0, -0.3);
+    car.add(cabin);
+
+    // 车轮
+    var wheelMat = new THREE.MeshStandardMaterial({ color: 0x111111 });
+    var wheelGeo = new THREE.CylinderGeometry(0.38, 0.38, 0.32, 12);
+    var wheels = [];
+    var wheelPositions = [
+      [-0.95, 0.38, 1.3], [0.95, 0.38, 1.3],
+      [-0.95, 0.38, -1.3], [0.95, 0.38, -1.3]
+    ];
+    wheelPositions.forEach(function (p) {
+      var w = new THREE.Mesh(wheelGeo, wheelMat);
+      w.rotation.z = Math.PI / 2;
+      w.position.set(p[0], p[1], p[2]);
+      car.add(w);
+      wheels.push(w);
+    });
+
+    // 车头大灯 / 车尾灯
+    var headMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 1 });
+    [[-0.6, 0.55, -2], [0.6, 0.55, -2]].forEach(function (p) {
+      var h = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 8), headMat);
+      h.position.set(p[0], p[1], p[2]);
+      car.add(h);
+    });
+    var tailMat = new THREE.MeshStandardMaterial({ color: 0xff2222, emissive: 0xff0000, emissiveIntensity: 1 });
+    [[-0.6, 0.55, 2], [0.6, 0.55, 2]].forEach(function (p) {
+      var t = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 8), tailMat);
+      t.position.set(p[0], p[1], p[2]);
+      car.add(t);
+    });
+
+    // 氮气尾焰（默认隐藏，加速时显示）
+    var flame = new THREE.Mesh(
+      new THREE.ConeGeometry(0.3, 1.1, 10),
+      new THREE.MeshBasicMaterial({ color: 0x66d9ff, transparent: true, opacity: 0.9 })
+    );
+    flame.rotation.x = Math.PI / 2;
+    flame.position.set(0, 0.45, 2.2);
+    flame.visible = false;
+    car.add(flame);
+
+    car.userData.wheels = wheels;
+    car.userData.flame = flame;
+    return car;
+  }
+
+  // ============================================================
+  // AI 车辆：生成 / 循环回收
+  // ============================================================
+  function laneCenterX(laneIndex) {
+    return -ROAD_HALF_WIDTH + LANE_WIDTH * (laneIndex + 0.5);
+  }
+
+  function spawnAiCars() {
+    for (var i = 0; i < AI_COUNT; i++) {
+      var mesh = createCarMesh(AI_COLORS[i % AI_COLORS.length]);
+      var data = { mesh: mesh, lane: 0, aiSpeed: 0 };
+      resetAiCar(data, true, i);
+      scene.add(mesh);
+      aiCars.push(data);
+    }
+  }
+
+  function resetAiCar(data, initial, index) {
+    data.lane = Math.floor(Math.random() * LANE_COUNT);
+    var factor = AI_MIN_SPEED_FACTOR + Math.random() * (AI_MAX_SPEED_FACTOR - AI_MIN_SPEED_FACTOR);
+    data.aiSpeed = factor * BASE_MAX_SPEED;   // AI 车在世界坐标系下的绝对巡航速度
+    var x = laneCenterX(data.lane);
+    var z = initial
+      ? -60 - (index || 0) * 65 - Math.random() * 35
+      : -320 - Math.random() * 420;
+    data.mesh.position.set(x, 0, z);
+  }
+
+  // ============================================================
+  // 每帧更新：玩家操作
+  // ============================================================
+  function updatePlayer(dt) {
+    // 加速 / 刹车 / 自然摩擦
+    if (keys['KeyW'] || keys['ArrowUp']) {
+      speed += ACCEL * dt;
+    } else if (keys['KeyS'] || keys['ArrowDown']) {
+      speed -= BRAKE_DECEL * dt;
+    } else {
+      if (speed > 0) speed = Math.max(0, speed - DRAG_DECEL * dt);
+      else if (speed < 0) speed = Math.min(0, speed + DRAG_DECEL * dt);
+    }
+
+    // 氮气加速
+    nitroActive = !!(keys['ShiftLeft'] || keys['ShiftRight'] || keys['Space']) && nitroFuel > 0.5 && speed > 0.5;
+    var maxSpeed = nitroActive ? NITRO_MAX_SPEED : BASE_MAX_SPEED;
+    if (nitroActive) {
+      speed += NITRO_EXTRA_ACCEL * dt;
+      nitroFuel = Math.max(0, nitroFuel - NITRO_DRAIN * dt);
+    } else {
+      nitroFuel = Math.min(100, nitroFuel + NITRO_REGEN * dt);
+    }
+    speed = THREE.MathUtils.clamp(speed, -8, maxSpeed);
+
+    // 转向（自由横移 + 视觉倾斜）
+    var steerInput = 0;
+    if (keys['KeyA'] || keys['ArrowLeft']) steerInput = -1;
+    if (keys['KeyD'] || keys['ArrowRight']) steerInput = 1;
+
+    steerX += steerInput * STEER_SPEED * dt;
+    var limit = ROAD_HALF_WIDTH - CAR_HALF_WIDTH - 0.3;
+    if (steerX > limit) { steerX = limit; if (steerInput > 0) speed = Math.max(0, speed - 20 * dt); }
+    if (steerX < -limit) { steerX = -limit; if (steerInput < 0) speed = Math.max(0, speed - 20 * dt); }
+
+    var targetYaw = steerInput * 0.28;
+    yaw += (targetYaw - yaw) * Math.min(1, dt * 6);
+
+    playerCar.position.x = steerX;
+    playerCar.rotation.y = yaw;
+
+    playerCar.userData.flame.visible = nitroActive;
+    if (nitroActive) {
+      var s = 0.8 + Math.random() * 0.6;
+      playerCar.userData.flame.scale.set(s, s, 1 + Math.random() * 0.6);
+    }
+
+    // 车轮转动视觉反馈
+    var wheelSpin = speed * dt * 2.2;
+    playerCar.userData.wheels.forEach(function (w) { w.rotation.x += wheelSpin; });
+
+    // 里程 / 最高速统计
+    distance += Math.max(0, speed) * dt;
+    topSpeedKmh = Math.max(topSpeedKmh, speed * SPEED_TO_KMH);
+
+    // 氮气冲刺视觉光晕
+    dom.nitroOverlay.classList.toggle('active', nitroActive);
+  }
+
+  // ============================================================
+  // 每帧更新：世界滚动（道路回收 + AI 车相对位移 + 碰撞检测）
+  // ============================================================
+  function updateWorldScroll(dt) {
+    var move = speed * dt;
+
+    roadChunks.forEach(function (chunk) {
+      chunk.position.z += move;
+      if (chunk.position.z > RECYCLE_Z) {
+        chunk.position.z -= TOTAL_ROAD_LENGTH;
+      }
+    });
+
+    aiCars.forEach(function (data) {
+      var rel = speed - data.aiSpeed;
+      data.mesh.position.z += rel * dt;
+
+      var wheelSpin = data.aiSpeed * dt * 2.2;
+      data.mesh.userData.wheels.forEach(function (w) { w.rotation.x += wheelSpin; });
+
+      if (data.mesh.position.z > RECYCLE_Z) {
+        resetAiCar(data, false);
+        return;
+      }
+
+      // 碰撞检测（玩家固定在 z=0）
+      if (gameState === 'playing') {
+        var dz = Math.abs(data.mesh.position.z);
+        var dx = Math.abs(data.mesh.position.x - playerCar.position.x);
+        if (dz < 3.0 && dx < 1.7) {
+          triggerCrash();
+        }
+      }
+    });
+  }
+
+  // ============================================================
+  // 摄像机：第三人称 / 第一人称
+  // ============================================================
+  function updateCamera(dt) {
+    if (viewMode === 'third') {
+      var targetX = playerCar.position.x * 0.6;
+      camThirdX += (targetX - camThirdX) * Math.min(1, dt * 4);
+      camera.position.set(camThirdX, 3.4, 8.5);
+      camera.lookAt(playerCar.position.x * 0.3, 1.1, -8);
+      camera.fov = nitroActive ? 82 : 70;
+    } else {
+      camera.position.set(playerCar.position.x, 1.35, -0.4);
+      var lookX = playerCar.position.x + Math.sin(yaw) * 10;
+      camera.lookAt(lookX, 1.25, -30);
+      camera.fov = nitroActive ? 96 : 82;
+    }
+    camera.updateProjectionMatrix();
+  }
+
+  function updateIdleCamera(dt) {
+    idleAngle += dt * 0.15;
+    camera.position.set(Math.sin(idleAngle) * 9, 3.5, Math.cos(idleAngle) * 9);
+    camera.lookAt(0, 0.8, 0);
+  }
+
+  // ============================================================
+  // HUD：仪表盘 / 计时 / 距离
+  // ============================================================
+  function drawGauge(kmh) {
+    var w = dom.gauge.width, h = dom.gauge.height;
+    var cx = w / 2, cy = h * 0.85, r = w * 0.42;
+    gctx.clearRect(0, 0, w, h);
+
+    gctx.lineWidth = 10;
+    gctx.strokeStyle = 'rgba(255,255,255,0.15)';
+    gctx.beginPath();
+    gctx.arc(cx, cy, r, Math.PI * 1.0, Math.PI * 2.0);
+    gctx.stroke();
+
+    var frac = Math.min(1, kmh / GAUGE_MAX_KMH);
+    gctx.strokeStyle = frac > 0.85 ? '#ff4d4d' : (frac > 0.55 ? '#ffb020' : '#3ddc97');
+    gctx.beginPath();
+    gctx.arc(cx, cy, r, Math.PI * 1.0, Math.PI * 1.0 + frac * Math.PI);
+    gctx.stroke();
+
+    gctx.fillStyle = 'rgba(255,255,255,0.65)';
+    gctx.font = '10px Arial';
+    for (var i = 0; i <= 6; i++) {
+      var a = Math.PI * 1.0 + (i / 6) * Math.PI;
+      var val = Math.round((i / 6) * GAUGE_MAX_KMH);
+      var tx = cx + Math.cos(a) * (r - 18);
+      var ty = cy + Math.sin(a) * (r - 18);
+      gctx.fillText(val, tx - 8, ty + 3);
+    }
+
+    var needleAngle = Math.PI * 1.0 + frac * Math.PI;
+    gctx.strokeStyle = '#fff';
+    gctx.lineWidth = 3;
+    gctx.beginPath();
+    gctx.moveTo(cx, cy);
+    gctx.lineTo(cx + Math.cos(needleAngle) * (r - 14), cy + Math.sin(needleAngle) * (r - 14));
+    gctx.stroke();
+    gctx.fillStyle = '#fff';
+    gctx.beginPath();
+    gctx.arc(cx, cy, 5, 0, Math.PI * 2);
+    gctx.fill();
+  }
+
+  function formatTime(t) {
+    var m = Math.floor(t / 60);
+    var s = Math.floor(t % 60);
+    return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+  }
+
+  function formatDistance(d) {
+    return d >= 1000 ? (d / 1000).toFixed(2) + ' km' : Math.floor(d) + ' m';
+  }
+
+  function updateHud() {
+    var kmh = Math.round(Math.max(0, speed) * SPEED_TO_KMH);
+    dom.speedNum.innerHTML = kmh + '<span id="speedUnit">km/h</span>';
+    drawGauge(kmh);
+
+    dom.nitroFill.style.width = nitroFuel.toFixed(0) + '%';
+    dom.nitroFill.classList.toggle('active', nitroActive);
+
+    dom.timeValue.textContent = formatTime(elapsed);
+    dom.distValue.textContent = formatDistance(distance);
+    dom.viewValue.textContent = viewMode === 'third' ? '第三人称' : '第一人称';
+  }
+
+  // ============================================================
+  // 游戏状态：开始 / 撞车 / 重置
+  // ============================================================
+  function triggerCrash() {
+    if (gameState !== 'playing') return;
+    gameState = 'crashed';
+    speed = 0;
+    dom.crashDist.textContent = formatDistance(distance);
+    dom.crashTime.textContent = formatTime(elapsed);
+    dom.crashTop.textContent = Math.round(topSpeedKmh) + ' km/h';
+    dom.crashScreen.style.display = 'flex';
+    dom.nitroOverlay.classList.remove('active');
+  }
+
+  function resetState() {
+    speed = 0; steerX = 0; yaw = 0; nitroFuel = 100;
+    distance = 0; topSpeedKmh = 0; elapsed = 0; camThirdX = 0;
+
+    playerCar.position.set(0, 0, 0);
+    playerCar.rotation.set(0, 0, 0);
+
+    roadChunks.forEach(function (c, i) { c.position.z = -i * CHUNK_LENGTH; });
+    aiCars.forEach(function (d, i) { resetAiCar(d, true, i); });
+  }
+
+  function startGame() {
+    dom.startScreen.style.display = 'none';
+    dom.crashScreen.style.display = 'none';
+    resetState();
+    gameState = 'playing';
+    startTime = performance.now();
+    clock.getDelta();   // 丢弃开始前累积的空闲 delta，避免第一帧跳变
+  }
+
+  // ============================================================
+  // 输入绑定
+  // ============================================================
+  function bindEvents() {
+    window.addEventListener('keydown', function (e) {
+      keys[e.code] = true;
+
+      if (e.code === 'KeyC' || e.code === 'KeyV') {
+        viewMode = viewMode === 'third' ? 'first' : 'third';
+      }
+      if (e.code === 'KeyR' && gameState === 'crashed') {
+        startGame();
+      }
+      if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].indexOf(e.code) !== -1) {
+        e.preventDefault();
+      }
+    });
+
+    window.addEventListener('keyup', function (e) { keys[e.code] = false; });
+
+    dom.startBtn.addEventListener('click', startGame);
+    dom.restartBtn.addEventListener('click', startGame);
+
+    window.addEventListener('resize', function () {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  }
+
+  // ============================================================
+  // 主循环
+  // ============================================================
+  function animate() {
+    requestAnimationFrame(animate);
+    var dt = Math.min(clock.getDelta(), 0.05);
+
+    if (gameState === 'playing') {
+      updatePlayer(dt);
+      updateWorldScroll(dt);
+      updateCamera(dt);
+      elapsed = (performance.now() - startTime) / 1000;
+      updateHud();
+    } else if (gameState === 'ready') {
+      updateIdleCamera(dt);
+    }
+    // crashed 状态：不更新，画面定格在撞车瞬间
+
+    renderer.render(scene, camera);
+  }
+
+})();
+</script>
+</body>
+</html>
